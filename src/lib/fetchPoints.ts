@@ -76,8 +76,9 @@ export async function fetchAllPoints(
 
         for (const match of completed) {
           const mid = String(match.MatchId);
-          if (!(mid in stored[pid])) {
-            stored[pid][mid] = match.GameDaypoints || 0;
+          const points = match.GameDaypoints || 0;
+          if (stored[pid][mid] !== points) {
+            stored[pid][mid] = points;
             hasNewData = true;
           }
         }
