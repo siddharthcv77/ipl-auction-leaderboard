@@ -1,4 +1,7 @@
-import { PlayerConfig, PlayerPoints, FantasyApiResponse } from "./types";
+import { put, list } from "@vercel/blob";
+import { PlayerConfig, PlayerPoints, FantasyApiResponse, StoredPoints } from "./types";
+
+const BLOB_FILENAME = "player-points.json";
 
 function formatBuster(): string {
   const now = new Date();
@@ -11,9 +14,25 @@ function formatBuster(): string {
   return `${mm}${dd}${yyyy}${hh}${min}${ss}`;
 }
 
-async function fetchPlayerPoints(
-  player: PlayerConfig
-): Promise<PlayerPoints> {
+async function loadStoredPoints(): Promise<StoredPoints> {
+  try {
+    const { blobs } = await list({ prefix: BLOB_FILENAME });
+    if (blobs.length === 0) return {};
+    const res = await fetch(blobs[0].url);
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
+async function saveStoredPoints(points: StoredPoints): Promise<void> {
+  await put(BLOB_FILENAME, JSON.stringify(points), {
+    access: "public",
+    addRandomSuffix: false,
+  });
+}
+
+async function fetchPlayerFromApi(player: PlayerConfig): Promise<FantasyApiResponse | null> {
   const buster = formatBuster();
   const url = `https://fantasy.iplt20.com/classic/api/feed/gameday-player/popup-cards?teamId=${player.teamId}&playerId=${player.playerId}&buster=${buster}`;
 
@@ -21,26 +40,12 @@ async function fetchPlayerPoints(
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
       console.warn(`Failed to fetch ${player.name}: HTTP ${res.status}`);
-      return { name: player.name, playerId: player.playerId, totalPoints: 0, matchesPlayed: 0 };
+      return null;
     }
-
-    const data: FantasyApiResponse = await res.json();
-    const completed = data.Data?.Value?.Completed;
-
-    if (!completed || completed.length === 0) {
-      return { name: player.name, playerId: player.playerId, totalPoints: 0, matchesPlayed: 0 };
-    }
-
-    const totalPoints = completed.reduce((sum, match) => sum + (match.GameDaypoints || 0), 0);
-    return {
-      name: player.name,
-      playerId: player.playerId,
-      totalPoints,
-      matchesPlayed: completed.length,
-    };
+    return await res.json();
   } catch (error) {
     console.warn(`Error fetching ${player.name}:`, error);
-    return { name: player.name, playerId: player.playerId, totalPoints: 0, matchesPlayed: 0 };
+    return null;
   }
 }
 
@@ -51,18 +56,56 @@ function sleep(ms: number): Promise<void> {
 export async function fetchAllPoints(
   players: PlayerConfig[]
 ): Promise<PlayerPoints[]> {
-  const results: PlayerPoints[] = [];
+  const stored = await loadStoredPoints();
+  let hasNewData = false;
   const batchSize = 10;
 
+  // Fetch from API in batches and merge new match data into stored points
   for (let i = 0; i < players.length; i += batchSize) {
     const batch = players.slice(i, i + batchSize);
-    const batchResults = await Promise.all(batch.map(fetchPlayerPoints));
-    results.push(...batchResults);
+    await Promise.all(
+      batch.map(async (player) => {
+        const data = await fetchPlayerFromApi(player);
+        if (!data) return;
+
+        const completed = data.Data?.Value?.Completed;
+        if (!completed || completed.length === 0) return;
+
+        const pid = String(player.playerId);
+        if (!stored[pid]) stored[pid] = {};
+
+        for (const match of completed) {
+          const mid = String(match.MatchId);
+          if (!(mid in stored[pid])) {
+            stored[pid][mid] = match.GameDaypoints || 0;
+            hasNewData = true;
+          }
+        }
+      })
+    );
 
     if (i + batchSize < players.length) {
       await sleep(100);
     }
   }
 
-  return results;
+  // Save to Blob if we found new match data
+  if (hasNewData) {
+    await saveStoredPoints(stored);
+  }
+
+  // Build results from stored points
+  return players.map((player) => {
+    const pid = String(player.playerId);
+    const matches = stored[pid] || {};
+    const matchEntries = Object.values(matches);
+    const totalPoints = matchEntries.reduce((sum, pts) => sum + pts, 0);
+
+    return {
+      name: player.name,
+      playerId: player.playerId,
+      totalPoints,
+      matchesPlayed: matchEntries.length,
+    };
+  });
 }

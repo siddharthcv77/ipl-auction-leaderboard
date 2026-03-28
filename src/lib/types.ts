@@ -44,5 +44,9 @@ export interface FantasyMatch {
   PlayerId: number;
   GameDaypoints: number;
   MatchName: string;
+  MatchId: number;
   IsPlayed: number;
 }
+
+// Blob storage shape: { [playerId]: { [matchId]: points } }
+export type StoredPoints = Record<string, Record<string, number>>;
