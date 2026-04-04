@@ -62,7 +62,7 @@ export default function TeamCard({
             </thead>
             <tbody>
               {team.players.map((player, i) => (
-                <PlayerRow key={player.playerId} player={player} index={i} />
+                <PlayerRow key={player.playerId} player={player} index={i} countsForTotal={i < 12} />
               ))}
             </tbody>
           </table>

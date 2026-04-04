@@ -17,7 +17,7 @@ async function buildLeaderboard(): Promise<TeamStanding[]> {
 
     teamPlayers.sort((a, b) => b.totalPoints - a.totalPoints);
 
-    const totalPoints = teamPlayers.reduce((sum, p) => sum + p.totalPoints, 0);
+    const totalPoints = teamPlayers.slice(0, 12).reduce((sum, p) => sum + p.totalPoints, 0);
 
     return {
       teamName: team.teamName,
